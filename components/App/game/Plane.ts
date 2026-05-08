@@ -19,6 +19,13 @@ export class Plane {
   propellerHub: Gfx3Mesh;
   cockpit: Gfx3Mesh;
   trailMesh: Gfx3Mesh;
+  
+  wheelLeft: Gfx3Mesh;
+  wheelRight: Gfx3Mesh;
+  wheelBack: Gfx3Mesh;
+  strutLeft: Gfx3Mesh;
+  strutRight: Gfx3Mesh;
+  strutBack: Gfx3Mesh;
 
   physicsBody: any;
   velocity: number = 20; // Default cruising speed
@@ -53,6 +60,18 @@ export class Plane {
     this.propeller = createBoxMesh(4.5, 0.1, 0.1, propColor);
     this.propellerHub = createBoxMesh(0.6, 0.6, 0.8, propHubColor);
     this.trailMesh = createBoxMesh(1.0, 1.0, 1.0, [0.9, 0.95, 1.0]); // white/light-blue trail
+    
+    // Wheels setup
+    const tireColor: [number, number, number] = [0.1, 0.1, 0.1];
+    const strutColor: [number, number, number] = [0.3, 0.3, 0.3];
+    
+    this.wheelLeft = createBoxMesh(0.2, 0.6, 0.6, tireColor); // Simple boxy tires
+    this.wheelRight = createBoxMesh(0.2, 0.6, 0.6, tireColor);
+    this.wheelBack = createBoxMesh(0.15, 0.4, 0.4, tireColor);
+    
+    this.strutLeft = createBoxMesh(0.1, 0.8, 0.1, strutColor);
+    this.strutRight = createBoxMesh(0.1, 0.8, 0.1, strutColor);
+    this.strutBack = createBoxMesh(0.1, 0.4, 0.1, strutColor);
 
     this.physicsBody = gfx3JoltManager.addBox({
       width: 1.4, height: 1.4, depth: 7.5, // approximate full size
@@ -187,17 +206,61 @@ export class Plane {
 
     // Propeller spinning at the front of the nose
     this.propAngle += this.velocity * 1.5 * (ts/1000);
-    const propLocalQuat = Quaternion.createFromEuler(0, 0, this.propAngle, 'ZXY');
+    const propLocalQuat = Quaternion.createFromEuler(0, 0, this.propAngle, 'YXZ');
     const propFinalQuat = Quaternion.multiply(quat, propLocalQuat);
     
     const propHubOffset = quat.rotateVector([0, -0.2, -3.4]);
     this.propellerHub.setPosition(pos.GetX() + propHubOffset[0], pos.GetY() + propHubOffset[1], pos.GetZ() + propHubOffset[2]);
-    this.propellerHub.setQuaternion(quat); // hub doesn't need to spin visually if it's rotation symmetric, but we can spin it
-    this.propellerHub.setQuaternion(propFinalQuat);
+    this.propellerHub.setQuaternion(quat);
     
-    const propOffset = quat.rotateVector([0, -0.2, -3.5]);
+    const propOffset = quat.rotateVector([0, -0.2, -3.5]); // slightly ahead of hub
     this.propeller.setPosition(pos.GetX() + propOffset[0], pos.GetY() + propOffset[1], pos.GetZ() + propOffset[2]);
     this.propeller.setQuaternion(propFinalQuat);
+
+    // Wheels logic - retracting them visually based on speed? Or just leave them down
+    // Let's retract them based on speed
+    const isFlyingFast = this.velocity > 50;
+    
+    // Smooth retraction blend (0 = down, 1 = up)
+    let wheelRetractAmount = Math.max(0, Math.min(1, (this.velocity - 35) / 20));
+    
+    // Left Wheel & Strut
+    // When down: [ -1.5, -1.2, -0.5 ]
+    // When up: [ -1.5, -0.3, -0.5 ] 
+    const lStrutPos = [ -2.0, -0.8 + 0.5 * wheelRetractAmount, -0.5 ];
+    const lWheelPos = [ -2.0, -1.2 + 0.9 * wheelRetractAmount, -0.5 ];
+    
+    const strutLeftOffset = quat.rotateVector(lStrutPos);
+    this.strutLeft.setPosition(pos.GetX() + strutLeftOffset[0], pos.GetY() + strutLeftOffset[1], pos.GetZ() + strutLeftOffset[2]);
+    this.strutLeft.setQuaternion(quat);
+    
+    const wheelLeftOffset = quat.rotateVector(lWheelPos);
+    this.wheelLeft.setPosition(pos.GetX() + wheelLeftOffset[0], pos.GetY() + wheelLeftOffset[1], pos.GetZ() + wheelLeftOffset[2]);
+    this.wheelLeft.setQuaternion(quat);
+    
+    // Right Wheel & Strut
+    const rStrutPos = [ 2.0, -0.8 + 0.5 * wheelRetractAmount, -0.5 ];
+    const rWheelPos = [ 2.0, -1.2 + 0.9 * wheelRetractAmount, -0.5 ];
+    
+    const strutRightOffset = quat.rotateVector(rStrutPos);
+    this.strutRight.setPosition(pos.GetX() + strutRightOffset[0], pos.GetY() + strutRightOffset[1], pos.GetZ() + strutRightOffset[2]);
+    this.strutRight.setQuaternion(quat);
+    
+    const wheelRightOffset = quat.rotateVector(rWheelPos);
+    this.wheelRight.setPosition(pos.GetX() + wheelRightOffset[0], pos.GetY() + wheelRightOffset[1], pos.GetZ() + wheelRightOffset[2]);
+    this.wheelRight.setQuaternion(quat);
+
+    // Back Wheel & Strut
+    const bStrutPos = [ 0.0, -0.3 + 0.2 * wheelRetractAmount, 3.5 ];
+    const bWheelPos = [ 0.0, -0.5 + 0.4 * wheelRetractAmount, 3.5 ];
+    
+    const strutBackOffset = quat.rotateVector(bStrutPos);
+    this.strutBack.setPosition(pos.GetX() + strutBackOffset[0], pos.GetY() + strutBackOffset[1], pos.GetZ() + strutBackOffset[2]);
+    this.strutBack.setQuaternion(quat);
+    
+    const wheelBackOffset = quat.rotateVector(bWheelPos);
+    this.wheelBack.setPosition(pos.GetX() + wheelBackOffset[0], pos.GetY() + wheelBackOffset[1], pos.GetZ() + wheelBackOffset[2]);
+    this.wheelBack.setQuaternion(quat);
 
     // Contrails logic
     if (this.velocity > 60 || Math.abs(this.rollRate) > 1.0 || Math.abs(this.pitchRate) > 1.0) {
@@ -230,6 +293,12 @@ export class Plane {
     this.wings.draw();
     this.v_tail.draw();
     this.h_tail.draw();
+    this.strutLeft.draw();
+    this.strutRight.draw();
+    this.strutBack.draw();
+    this.wheelLeft.draw();
+    this.wheelRight.draw();
+    this.wheelBack.draw();
     this.propellerHub.draw();
     this.propeller.draw();
     
