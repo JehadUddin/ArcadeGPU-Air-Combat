@@ -48,33 +48,34 @@ export class Plane {
     const propHubColor: [number, number, number] = [0.6, 0.1, 0.1]; // Red hub
     const cockpitColor: [number, number, number] = [0.2, 0.6, 0.8]; // Glass
 
-    this.nose = createBoxMesh(1.0, 1.0, 1.5, fuselageColor);
-    this.body = createBoxMesh(1.4, 1.4, 3.0, fuselageColor);
-    this.tailBoom = createBoxMesh(0.8, 0.8, 3.0, fuselageColor);
+    // Sleeker fighter plane
+    this.nose = createBoxMesh(0.8, 0.9, 1.6, fuselageColor);
+    this.body = createBoxMesh(1.2, 1.2, 2.8, fuselageColor);
+    this.tailBoom = createBoxMesh(0.6, 0.7, 3.0, fuselageColor);
     
-    this.cockpit = createBoxMesh(1.0, 0.8, 1.8, cockpitColor);
-    this.wings = createBoxMesh(10.0, 0.15, 2.2, wingColor);
-    this.v_tail = createBoxMesh(0.15, 2.0, 1.5, wingColor);
-    this.h_tail = createBoxMesh(3.5, 0.15, 1.2, wingColor);
+    this.cockpit = createBoxMesh(0.8, 0.6, 1.5, cockpitColor);
+    this.wings = createBoxMesh(11.0, 0.12, 2.0, wingColor);
+    this.v_tail = createBoxMesh(0.1, 1.6, 1.2, wingColor);
+    this.h_tail = createBoxMesh(3.2, 0.1, 1.0, wingColor);
     
-    this.propeller = createBoxMesh(4.5, 0.1, 0.1, propColor);
-    this.propellerHub = createBoxMesh(0.6, 0.6, 0.8, propHubColor);
+    this.propeller = createBoxMesh(3.4, 0.08, 0.08, propColor);
+    this.propellerHub = createBoxMesh(0.4, 0.4, 0.6, propHubColor);
     this.trailMesh = createBoxMesh(1.0, 1.0, 1.0, [0.9, 0.95, 1.0]); // white/light-blue trail
     
     // Wheels setup
     const tireColor: [number, number, number] = [0.1, 0.1, 0.1];
     const strutColor: [number, number, number] = [0.3, 0.3, 0.3];
     
-    this.wheelLeft = createBoxMesh(0.2, 0.6, 0.6, tireColor); // Simple boxy tires
-    this.wheelRight = createBoxMesh(0.2, 0.6, 0.6, tireColor);
-    this.wheelBack = createBoxMesh(0.15, 0.4, 0.4, tireColor);
+    this.wheelLeft = createBoxMesh(0.15, 0.4, 0.4, tireColor); // Simple boxy tires
+    this.wheelRight = createBoxMesh(0.15, 0.4, 0.4, tireColor);
+    this.wheelBack = createBoxMesh(0.1, 0.25, 0.25, tireColor);
     
     this.strutLeft = createBoxMesh(0.1, 0.8, 0.1, strutColor);
     this.strutRight = createBoxMesh(0.1, 0.8, 0.1, strutColor);
     this.strutBack = createBoxMesh(0.1, 0.4, 0.1, strutColor);
 
     this.physicsBody = gfx3JoltManager.addBox({
-      width: 1.4, height: 1.4, depth: 7.5, // approximate full size
+      width: 1.2, height: 1.2, depth: 7.0, // approximate full size
       x: 0, y: 50.0, z: 0,
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
@@ -224,43 +225,65 @@ export class Plane {
     // Smooth retraction blend (0 = down, 1 = up)
     let wheelRetractAmount = Math.max(0, Math.min(1, (this.velocity - 35) / 20));
     
-    // Left Wheel & Strut
-    // When down: [ -1.5, -1.2, -0.5 ]
-    // When up: [ -1.5, -0.3, -0.5 ] 
-    const lStrutPos = [ -2.0, -0.8 + 0.5 * wheelRetractAmount, -0.5 ];
-    const lWheelPos = [ -2.0, -1.2 + 0.9 * wheelRetractAmount, -0.5 ];
+    // Left Gear
+    const lPivot: vec3 = [-1.5, -0.4, -0.5]; // under the left wing
+    const lGearAngle = wheelRetractAmount * (Math.PI / 2) * 0.95; // fold inward 85 degrees
+    const lGearQuat = Quaternion.createFromEuler(0, 0, -lGearAngle, 'YXZ');
+    const lGearFinalQuat = Quaternion.multiply(quat, lGearQuat);
+    
+    const lStrutLocal: vec3 = [0, -0.4, 0];
+    const lWheelLocal: vec3 = [0, -0.8, 0];
+    
+    const lStrutPos = UT.VEC3_ADD(lPivot, lGearQuat.rotateVector(lStrutLocal));
+    const lWheelPos = UT.VEC3_ADD(lPivot, lGearQuat.rotateVector(lWheelLocal));
     
     const strutLeftOffset = quat.rotateVector(lStrutPos);
     this.strutLeft.setPosition(pos.GetX() + strutLeftOffset[0], pos.GetY() + strutLeftOffset[1], pos.GetZ() + strutLeftOffset[2]);
-    this.strutLeft.setQuaternion(quat);
+    this.strutLeft.setQuaternion(lGearFinalQuat);
     
     const wheelLeftOffset = quat.rotateVector(lWheelPos);
     this.wheelLeft.setPosition(pos.GetX() + wheelLeftOffset[0], pos.GetY() + wheelLeftOffset[1], pos.GetZ() + wheelLeftOffset[2]);
-    this.wheelLeft.setQuaternion(quat);
+    this.wheelLeft.setQuaternion(lGearFinalQuat);
     
-    // Right Wheel & Strut
-    const rStrutPos = [ 2.0, -0.8 + 0.5 * wheelRetractAmount, -0.5 ];
-    const rWheelPos = [ 2.0, -1.2 + 0.9 * wheelRetractAmount, -0.5 ];
+    // Right Gear
+    const rPivot: vec3 = [1.5, -0.4, -0.5]; // under the right wing
+    const rGearAngle = wheelRetractAmount * (Math.PI / 2) * 0.95; // fold inward 85 degrees
+    const rGearQuat = Quaternion.createFromEuler(0, 0, rGearAngle, 'YXZ');
+    const rGearFinalQuat = Quaternion.multiply(quat, rGearQuat);
+    
+    const rStrutLocal: vec3 = [0, -0.4, 0];
+    const rWheelLocal: vec3 = [0, -0.8, 0];
+    
+    const rStrutPos = UT.VEC3_ADD(rPivot, rGearQuat.rotateVector(rStrutLocal));
+    const rWheelPos = UT.VEC3_ADD(rPivot, rGearQuat.rotateVector(rWheelLocal));
     
     const strutRightOffset = quat.rotateVector(rStrutPos);
     this.strutRight.setPosition(pos.GetX() + strutRightOffset[0], pos.GetY() + strutRightOffset[1], pos.GetZ() + strutRightOffset[2]);
-    this.strutRight.setQuaternion(quat);
+    this.strutRight.setQuaternion(rGearFinalQuat);
     
     const wheelRightOffset = quat.rotateVector(rWheelPos);
     this.wheelRight.setPosition(pos.GetX() + wheelRightOffset[0], pos.GetY() + wheelRightOffset[1], pos.GetZ() + wheelRightOffset[2]);
-    this.wheelRight.setQuaternion(quat);
+    this.wheelRight.setQuaternion(rGearFinalQuat);
 
-    // Back Wheel & Strut
-    const bStrutPos = [ 0.0, -0.3 + 0.2 * wheelRetractAmount, 3.5 ];
-    const bWheelPos = [ 0.0, -0.5 + 0.4 * wheelRetractAmount, 3.5 ];
+    // Back Gear
+    const bPivot: vec3 = [0.0, -0.1, 3.2]; // under the tail
+    const bGearAngle = wheelRetractAmount * (Math.PI / 2) * 0.95; // fold backward
+    const bGearQuat = Quaternion.createFromEuler(bGearAngle, 0, 0, 'YXZ');
+    const bGearFinalQuat = Quaternion.multiply(quat, bGearQuat);
+    
+    const bStrutLocal: vec3 = [0, -0.2, 0];
+    const bWheelLocal: vec3 = [0, -0.4, 0];
+    
+    const bStrutPos = UT.VEC3_ADD(bPivot, bGearQuat.rotateVector(bStrutLocal));
+    const bWheelPos = UT.VEC3_ADD(bPivot, bGearQuat.rotateVector(bWheelLocal));
     
     const strutBackOffset = quat.rotateVector(bStrutPos);
     this.strutBack.setPosition(pos.GetX() + strutBackOffset[0], pos.GetY() + strutBackOffset[1], pos.GetZ() + strutBackOffset[2]);
-    this.strutBack.setQuaternion(quat);
+    this.strutBack.setQuaternion(bGearFinalQuat);
     
     const wheelBackOffset = quat.rotateVector(bWheelPos);
     this.wheelBack.setPosition(pos.GetX() + wheelBackOffset[0], pos.GetY() + wheelBackOffset[1], pos.GetZ() + wheelBackOffset[2]);
-    this.wheelBack.setQuaternion(quat);
+    this.wheelBack.setQuaternion(bGearFinalQuat);
 
     // Contrails logic
     if (this.velocity > 60 || Math.abs(this.rollRate) > 1.0 || Math.abs(this.pitchRate) > 1.0) {
