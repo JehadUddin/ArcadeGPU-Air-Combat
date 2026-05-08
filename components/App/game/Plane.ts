@@ -23,10 +23,7 @@ export class Plane {
   physicsBody: any;
   velocity: number = 20; // Default cruising speed
   
-  // Rotation values
-  yaw: number = 0;
-  pitch: number = 0;
-  roll: number = 0;
+  rotation: Quaternion = new Quaternion();
   
   rollRate: number = 0;
   pitchRate: number = 0;
@@ -78,50 +75,69 @@ export class Plane {
 
   update(ts: number, rollInput: number, pitchInput: number, yawInput: number, throttleInput: number) {
     const minSpeed = 20;
-    const maxSpeed = 120;
+    const maxSpeed = 150;
+    const dt = ts / 1000;
     
     // Convert inputs to target rates
-    const targetRollRate = rollInput * 3.0; // max 3 radians/sec ~ 180 deg/s
-    const targetPitchRate = pitchInput * 1.8;
-    const targetYawRate = yawInput * 1.2;
+    const rollResponsiveness = 3.5;
+    const pitchResponsiveness = 2.0;
+    const yawResponsiveness = 1.0;
+    
+    const normalizedSpeed = Math.max(0, Math.min(1, (this.velocity - minSpeed) / (maxSpeed - minSpeed)));
+    const maneuverability = 0.5 + 0.5 * Math.sin(normalizedSpeed * Math.PI); // best around middle speed
+
+    const targetRollRate = rollInput * rollResponsiveness * maneuverability;
+    const targetPitchRate = pitchInput * pitchResponsiveness * maneuverability;
+    const targetYawRate = yawInput * yawResponsiveness * maneuverability;
 
     // Smooth movement over time to simulate momentum/inertia
-    const rateSmooth = 1.0 - Math.exp(-6.0 * (ts / 1000));
+    const rateSmooth = 1.0 - Math.exp(-8.0 * dt);
     this.rollRate = UT.LERP(this.rollRate, targetRollRate, rateSmooth);
     this.pitchRate = UT.LERP(this.pitchRate, targetPitchRate, rateSmooth);
     this.yawRate = UT.LERP(this.yawRate, targetYawRate, rateSmooth);
 
-    // Apply rotation rates
-    this.roll -= this.rollRate * (ts / 1000);
-    this.pitch -= this.pitchRate * (ts / 1000);
-    this.yaw -= this.yawRate * (ts / 1000);
+    // Apply local rotation rates
+    // To simulate lift pulling us when banked:
+    const localUp = this.rotation.rotateVector([0, 1, 0]);
+    // If banked, localUp[0] is non-zero (pulling left/right in world space)
     
-    // Natural banked turn: plane gradually turns into the roll
-    const turnRate = Math.sin(this.roll) * 1.5 * Math.cos(this.pitch);
-    this.yaw -= turnRate * (ts / 1000);
-    
-    // Natural gravity pitch down when rolled (simulate lift vector moving sideways)
-    const pitchDrop = Math.abs(Math.sin(this.roll)) * 0.4;
-    this.pitch += pitchDrop * (ts / 1000);
+    // Actually, local delta rotation:
+    const deltaYaw = this.yawRate * dt;
+    const deltaPitch = this.pitchRate * dt; 
+    const deltaRoll = this.rollRate * dt;
 
-    // Avoid gimbal lock by clamping pitch
-    this.pitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, this.pitch));
+    const localRot = Quaternion.createFromEuler(deltaYaw, deltaPitch, deltaRoll, 'YXZ');
+    this.rotation = Quaternion.multiply(this.rotation, localRot);
+    
+    // Normalize quaternion
+    let len = Math.sqrt(this.rotation[0]*this.rotation[0] + this.rotation[1]*this.rotation[1] + this.rotation[2]*this.rotation[2] + this.rotation[3]*this.rotation[3]);
+    if(len > 0) {
+        this.rotation[0] /= len; this.rotation[1] /= len; this.rotation[2] /= len; this.rotation[3] /= len;
+    }
 
     // Throttle controls
-    const accelRate = throttleInput * 25.0;
-    this.velocity += accelRate * (ts / 1000);
+    const accelRate = throttleInput * 30.0;
+    this.velocity += accelRate * dt;
+    
+    // Gravity effect on speed based on pitch
+    const forwardVec = this.rotation.rotateVector([0, 0, -1]);
+    const verticalPitch = forwardVec[1]; // y component of forward vector (-1 diving, 1 climbing)
+    this.velocity -= verticalPitch * 15.0 * dt; // gravity speeds up dives, slows climbs
     
     // Drag/air resistance brings speed closer to default cruise if no input
     if (Math.abs(throttleInput) < 0.1) {
         const defaultCruise = 50;
-        this.velocity = UT.LERP(this.velocity, defaultCruise, 1.0 - Math.exp(-0.5 * (ts / 1000)));
+        this.velocity = UT.LERP(this.velocity, defaultCruise, 1.0 - Math.exp(-0.5 * dt));
     }
+    
+    // High G maneuvers bleed speed
+    const gForce = Math.abs(this.pitchRate) + Math.abs(this.yawRate);
+    this.velocity -= gForce * 5.0 * dt;
     
     // Speed boundaries
     this.velocity = Math.max(minSpeed, Math.min(maxSpeed, this.velocity));
 
-    // Calculate rotation quaternion (YXZ order is yaw-pitch-roll)
-    let quat = Quaternion.createFromEuler(this.yaw, this.pitch, this.roll, 'YXZ');
+    let quat = this.rotation;
     
     // Forward vector
     const forward = quat.rotateVector([0, 0, -1]);

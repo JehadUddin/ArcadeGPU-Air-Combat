@@ -110,8 +110,9 @@ export class GameScreen extends Screen {
         this.virtualMouseX *= Math.exp(-2.5 * (ts / 1000));
         this.virtualMouseY *= Math.exp(-2.5 * (ts / 1000));
         
-        yawInput -= this.virtualMouseX; // Mouse X -> Yaw
-        pitchInput += this.virtualMouseY; // Mouse Y -> Pitch
+        yawInput -= this.virtualMouseX * 0.3; // small rudder
+        rollInput -= this.virtualMouseX; // mostly bank
+        pitchInput -= this.virtualMouseY; // Pitch up/down
     }
     this.frameMouseX = 0;
     this.frameMouseY = 0;
@@ -121,16 +122,22 @@ export class GameScreen extends Screen {
 
     // Camera follow the plane smoothly
     const followPos = this.plane.getPosition();
-    const planeQ = Quaternion.createFromEuler(this.plane.yaw, this.plane.pitch, this.plane.roll, 'YXZ');
+    const planeRot = this.plane.rotation;
     
-    // Offset behind and up relative to the plane's YAW and slightly pitch
-    // By keeping roll at 0 for offset, the camera won't flip upside down when the plane rolls
-    const offsetQuat = Quaternion.createFromEuler(this.plane.yaw, this.plane.pitch * 0.8, 0, 'YXZ');
+    const forwardVec = planeRot.rotateVector([0, 0, -1]);
+    
+    // Extract yaw and pitch for smooth camera follow (ignoring roll so camera stays upright)
+    // Warning: atan2 can be unstable pointing straight up, but for arcade camera it's usually acceptable if we clamp or smooth
+    let camYaw = Math.atan2(forwardVec[0], forwardVec[2]) + Math.PI; // pointing towards -Z
+    let camPitch = Math.asin(-forwardVec[1]);
+    
+    // Offset behind and up 
+    const offsetQuat = Quaternion.createFromEuler(camYaw, camPitch * 0.6, 0, 'YXZ');
     
     // Dynamic camera back offset based on velocity
-    const speedFactor = Math.max(0, (this.plane.velocity - 50) / 70); // 0 at cruise, goes up to 1 at max speed
-    const zOffset = 18 + speedFactor * 12.0; 
-    const yOffset = 4 + speedFactor * 3.0;
+    const speedFactor = Math.max(0, (this.plane.velocity - 50) / 100.0);
+    const zOffset = 18 + speedFactor * 10.0; 
+    const yOffset = 4 + speedFactor * 2.0;
 
     const camOffset = offsetQuat.rotateVector([0, yOffset, zOffset]);
     
@@ -149,13 +156,35 @@ export class GameScreen extends Screen {
     const targetLerpRate = 1.0 - Math.exp(-10.0 * (ts / 1000));
 
     const lerpedPos = UT.VEC3_LERP(camPos, camTarget, posLerpRate);
-    const desiredLookTarget = [followPos[0], followPos[1] + 1.0, followPos[2]] as vec3;
+    const desiredLookTarget = [followPos[0], followPos[1] + 2.0, followPos[2]] as vec3; // slightly higher
     this.cameraLookTarget = UT.VEC3_LERP(this.cameraLookTarget, desiredLookTarget, targetLerpRate);
     
+    // Dynamic camera up vector: rolls slightly into turns (30% of plane roll)
+    const planeUp = planeRot.rotateVector([0, 1, 0]);
+    const staticUp: vec3 = [0, 1, 0];
+    const cameraUp = UT.VEC3_NORMALIZE(UT.VEC3_LERP(staticUp, planeUp, 0.3));
+
     if (!isNaN(lerpedPos[0]) && !isNaN(lerpedPos[1]) && !isNaN(lerpedPos[2])) {
-        this.camera.setPosition(lerpedPos[0], lerpedPos[1], lerpedPos[2]);
-        this.camera.lookAt(this.cameraLookTarget[0], this.cameraLookTarget[1], this.cameraLookTarget[2]);
+        // Camera shake at high speeds
+        let shakeX = 0, shakeY = 0, shakeZ = 0;
+        if (speedFactor > 0.5) {
+            const shakeMag = (speedFactor - 0.5) * 1.5;
+            shakeX = (Math.random() - 0.5) * shakeMag;
+            shakeY = (Math.random() - 0.5) * shakeMag;
+            shakeZ = (Math.random() - 0.5) * shakeMag;
+        }
+        
+        this.camera.setPosition(lerpedPos[0] + shakeX, lerpedPos[1] + shakeY, lerpedPos[2] + shakeZ);
+        this.camera.lookAt(this.cameraLookTarget[0] + shakeX * 0.2, this.cameraLookTarget[1] + shakeY * 0.2, this.cameraLookTarget[2] + shakeZ * 0.2, cameraUp);
     }
+    
+    // Expand FOV with speed for dramatic effect
+    // Fovy is in radians... default is Math.PI/3 (60 degrees)
+    const baseFov = Math.PI / 3;
+    const maxFov = Math.PI / 2; // 90 degrees
+    const targetFov = baseFov + speedFactor * (maxFov - baseFov);
+    const currentFov = this.camera.getPerspectiveFovy() || baseFov;
+    this.camera.setPerspectiveFovy(UT.LERP(currentFov, targetFov, 2.0 * (ts/1000)));
   }
 
   draw() {
