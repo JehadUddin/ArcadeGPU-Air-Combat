@@ -29,8 +29,10 @@ export class Plane {
 
   physicsBody: any;
   velocity: number = 20; // Default cruising speed
+  isLanded: boolean = false;
   
   rotation: Quaternion = new Quaternion();
+
   
   rollRate: number = 0;
   pitchRate: number = 0;
@@ -58,17 +60,17 @@ export class Plane {
     this.v_tail = createBoxMesh(0.1, 1.6, 1.2, wingColor);
     this.h_tail = createBoxMesh(3.2, 0.1, 1.0, wingColor);
     
-    this.propeller = createBoxMesh(3.4, 0.08, 0.08, propColor);
-    this.propellerHub = createBoxMesh(0.4, 0.4, 0.6, propHubColor);
+    this.propeller = createBoxMesh(2.4, 0.08, 0.08, propColor);
+    this.propellerHub = createBoxMesh(0.3, 0.3, 0.4, propHubColor);
     this.trailMesh = createBoxMesh(1.0, 1.0, 1.0, [0.9, 0.95, 1.0]); // white/light-blue trail
     
     // Wheels setup
     const tireColor: [number, number, number] = [0.1, 0.1, 0.1];
     const strutColor: [number, number, number] = [0.3, 0.3, 0.3];
     
-    this.wheelLeft = createBoxMesh(0.15, 0.4, 0.4, tireColor); // Simple boxy tires
-    this.wheelRight = createBoxMesh(0.15, 0.4, 0.4, tireColor);
-    this.wheelBack = createBoxMesh(0.1, 0.25, 0.25, tireColor);
+    this.wheelLeft = createBoxMesh(0.12, 0.3, 0.3, tireColor); // Simple boxy tires
+    this.wheelRight = createBoxMesh(0.12, 0.3, 0.3, tireColor);
+    this.wheelBack = createBoxMesh(0.08, 0.2, 0.2, tireColor);
     
     this.strutLeft = createBoxMesh(0.1, 0.8, 0.1, strutColor);
     this.strutRight = createBoxMesh(0.1, 0.8, 0.1, strutColor);
@@ -94,21 +96,42 @@ export class Plane {
   }
 
   update(ts: number, rollInput: number, pitchInput: number, yawInput: number, throttleInput: number) {
-    const minSpeed = 20;
+    const pos = this.physicsBody.body.GetPosition();
+    const planeY = pos.GetY();
+    const groundY = 1.3; // Wheels extend to approx -1.2
+
+    if (planeY <= groundY) {
+        this.isLanded = true;
+        // Snap to ground to prevent falling through when pitched down
+        gfx3JoltManager.bodyInterface.SetPosition(this.physicsBody.body.GetID(), new Gfx3Jolt.Vec3(pos.GetX(), groundY, pos.GetZ()), Gfx3Jolt.EActivation_Activate);
+    }
+    
+    // Evaluate if we are leaving the ground
+    const currentForward = this.rotation.rotateVector([0, 0, -1]);
+    if (this.isLanded && this.velocity > 45 && currentForward[1] > 0.1) {
+        this.isLanded = false; // Takeoff!
+    }
+
+    const minSpeed = this.isLanded ? 0 : 25;
     const maxSpeed = 150;
     const dt = ts / 1000;
     
     // Convert inputs to target rates
     const rollResponsiveness = 3.5;
     const pitchResponsiveness = 2.0;
-    const yawResponsiveness = 1.0;
     
-    const normalizedSpeed = Math.max(0, Math.min(1, (this.velocity - minSpeed) / (maxSpeed - minSpeed)));
-    const maneuverability = 0.5 + 0.5 * Math.sin(normalizedSpeed * Math.PI); // best around middle speed
+    const normalizedSpeed = Math.max(0, Math.min(1, (this.velocity - 20) / (maxSpeed - 20)));
+    const maneuverability = this.isLanded ? 0 : 0.5 + 0.5 * Math.sin(normalizedSpeed * Math.PI); // best around middle speed
 
-    const targetRollRate = rollInput * rollResponsiveness * maneuverability;
-    const targetPitchRate = pitchInput * pitchResponsiveness * maneuverability;
-    const targetYawRate = yawInput * yawResponsiveness * maneuverability;
+    let targetRollRate = rollInput * rollResponsiveness * maneuverability;
+    let targetPitchRate = pitchInput * pitchResponsiveness * maneuverability;
+    let targetYawRate = yawInput * 1.0 * maneuverability;
+
+    if (this.isLanded) {
+        targetRollRate = 0;
+        targetPitchRate = pitchInput * 1.5; // Allow pulling up to takeoff
+        targetYawRate = yawInput * 1.5; // Steer on ground
+    }
 
     // Smooth movement over time to simulate momentum/inertia
     const rateSmooth = 1.0 - Math.exp(-8.0 * dt);
@@ -117,14 +140,23 @@ export class Plane {
     this.yawRate = UT.LERP(this.yawRate, targetYawRate, rateSmooth);
 
     // Apply local rotation rates
-    // To simulate lift pulling us when banked:
-    const localUp = this.rotation.rotateVector([0, 1, 0]);
-    // If banked, localUp[0] is non-zero (pulling left/right in world space)
-    
-    // Actually, local delta rotation:
-    const deltaYaw = this.yawRate * dt;
-    const deltaPitch = this.pitchRate * dt; 
-    const deltaRoll = this.rollRate * dt;
+    let deltaYaw = this.yawRate * dt;
+    let deltaPitch = this.pitchRate * dt; 
+    let deltaRoll = this.rollRate * dt;
+
+    if (this.isLanded) {
+        // Auto-level roll
+        const localRight = this.rotation.rotateVector([1, 0, 0]);
+        const rollError = Math.asin(Math.max(-1, Math.min(1, localRight[1])));
+        deltaRoll += rollError * 5.0 * dt; // strong force to level wings
+        
+        // Auto-level pitch slightly unless we are taking off
+        if (pitchInput >= 0) { // If not pulling back
+            const localForward = this.rotation.rotateVector([0, 0, -1]);
+            const pitchError = Math.asin(Math.max(-1, Math.min(1, localForward[1])));
+            deltaPitch += pitchError * 3.0 * dt;
+        }
+    }
 
     const localRot = Quaternion.createFromEuler(deltaYaw, deltaPitch, deltaRoll, 'YXZ');
     this.rotation = Quaternion.multiply(this.rotation, localRot);
@@ -136,16 +168,21 @@ export class Plane {
     }
 
     // Throttle controls
-    const accelRate = throttleInput * 30.0;
+    const accelRate = throttleInput * (this.isLanded ? 15.0 : 30.0);
     this.velocity += accelRate * dt;
     
     // Gravity effect on speed based on pitch
     const forwardVec = this.rotation.rotateVector([0, 0, -1]);
     const verticalPitch = forwardVec[1]; // y component of forward vector (-1 diving, 1 climbing)
-    this.velocity -= verticalPitch * 15.0 * dt; // gravity speeds up dives, slows climbs
+    if (!this.isLanded) {
+        this.velocity -= verticalPitch * 15.0 * dt; // gravity speeds up dives, slows climbs
+    } else {
+        // Ground friction
+        this.velocity -= this.velocity * 0.5 * dt; if (throttleInput == 0 && this.velocity < 5) this.velocity = 0;
+    }
     
     // Drag/air resistance brings speed closer to default cruise if no input
-    if (Math.abs(throttleInput) < 0.1) {
+    if (Math.abs(throttleInput) < 0.1 && !this.isLanded) {
         const defaultCruise = 50;
         this.velocity = UT.LERP(this.velocity, defaultCruise, 1.0 - Math.exp(-0.5 * dt));
     }
@@ -163,63 +200,73 @@ export class Plane {
     const forward = quat.rotateVector([0, 0, -1]);
     
     // Update physics velocity
-    const linVel = UT.VEC3_SCALE(forward, this.velocity);
+    const trueSpeed = this.isLanded ? Math.max(0, this.velocity) : this.velocity;
+    
+    // If landed, velocity shouldn't go down into the ground
+    let linVel = UT.VEC3_SCALE(forward, trueSpeed);
+    if (this.isLanded && linVel[1] < 0) {
+        linVel[1] = 0; // prevent downward velocity
+    }
+    
     const joltLinVel = new Gfx3Jolt.Vec3(linVel[0], linVel[1], linVel[2]);
     gfx3JoltManager.bodyInterface.SetLinearVelocity(this.physicsBody.body.GetID(), joltLinVel);
     
-    const pos = this.physicsBody.body.GetPosition();
+    // pos is already declared at the top of the function. Update it.
+    pos.SetX(this.physicsBody.body.GetPosition().GetX());
+    pos.SetY(this.physicsBody.body.GetPosition().GetY());
+    pos.SetZ(this.physicsBody.body.GetPosition().GetZ());
     
     // Sync Mesh Positions
     // Base position is roughly the center of mass
+    const currentPos = this.physicsBody.body.GetPosition();
     const bodyOffset = quat.rotateVector([0, 0, 0]);
-    this.body.setPosition(pos.GetX() + bodyOffset[0], pos.GetY() + bodyOffset[1], pos.GetZ() + bodyOffset[2]);
+    this.body.setPosition(currentPos.GetX() + bodyOffset[0], currentPos.GetY() + bodyOffset[1], currentPos.GetZ() + bodyOffset[2]);
     this.body.setQuaternion(quat);
     
     // Nose is in front of the body
     const noseOffset = quat.rotateVector([0, -0.2, -2.25]);
-    this.nose.setPosition(pos.GetX() + noseOffset[0], pos.GetY() + noseOffset[1], pos.GetZ() + noseOffset[2]);
+    this.nose.setPosition(currentPos.GetX() + noseOffset[0], currentPos.GetY() + noseOffset[1], currentPos.GetZ() + noseOffset[2]);
     this.nose.setQuaternion(quat);
     
     // Tailboom is behind the body
     const tailOffset = quat.rotateVector([0, 0, 3.0]);
-    this.tailBoom.setPosition(pos.GetX() + tailOffset[0], pos.GetY() + tailOffset[1], pos.GetZ() + tailOffset[2]);
+    this.tailBoom.setPosition(currentPos.GetX() + tailOffset[0], currentPos.GetY() + tailOffset[1], currentPos.GetZ() + tailOffset[2]);
     this.tailBoom.setQuaternion(quat);
     
     // Cockpit on top of the body
     const cockpitOffset = quat.rotateVector([0, 1.1, -0.5]);
-    this.cockpit.setPosition(pos.GetX() + cockpitOffset[0], pos.GetY() + cockpitOffset[1], pos.GetZ() + cockpitOffset[2]);
+    this.cockpit.setPosition(currentPos.GetX() + cockpitOffset[0], currentPos.GetY() + cockpitOffset[1], currentPos.GetZ() + cockpitOffset[2]);
     this.cockpit.setQuaternion(quat);
 
     // Wings attached near the front/center of the body
     const wingOffset = quat.rotateVector([0, -0.4, -0.5]);
-    this.wings.setPosition(pos.GetX() + wingOffset[0], pos.GetY() + wingOffset[1], pos.GetZ() + wingOffset[2]);
+    this.wings.setPosition(currentPos.GetX() + wingOffset[0], currentPos.GetY() + wingOffset[1], currentPos.GetZ() + wingOffset[2]);
     this.wings.setQuaternion(quat);
 
     // V-Tail on top of the rear tail boom
     const vTailOffset = quat.rotateVector([0, 0.8, 4.0]);
-    this.v_tail.setPosition(pos.GetX() + vTailOffset[0], pos.GetY() + vTailOffset[1], pos.GetZ() + vTailOffset[2]);
+    this.v_tail.setPosition(currentPos.GetX() + vTailOffset[0], currentPos.GetY() + vTailOffset[1], currentPos.GetZ() + vTailOffset[2]);
     this.v_tail.setQuaternion(quat);
 
     // H-Tail at the rear of the tail boom
     const hTailOffset = quat.rotateVector([0, 0.0, 4.2]);
-    this.h_tail.setPosition(pos.GetX() + hTailOffset[0], pos.GetY() + hTailOffset[1], pos.GetZ() + hTailOffset[2]);
+    this.h_tail.setPosition(currentPos.GetX() + hTailOffset[0], currentPos.GetY() + hTailOffset[1], currentPos.GetZ() + hTailOffset[2]);
     this.h_tail.setQuaternion(quat);
 
     // Propeller spinning at the front of the nose
-    this.propAngle += this.velocity * 1.5 * (ts/1000);
+    this.propAngle += this.velocity * 1.5 * dt;
     const propLocalQuat = Quaternion.createFromEuler(0, 0, this.propAngle, 'YXZ');
     const propFinalQuat = Quaternion.multiply(quat, propLocalQuat);
     
     const propHubOffset = quat.rotateVector([0, -0.2, -3.4]);
-    this.propellerHub.setPosition(pos.GetX() + propHubOffset[0], pos.GetY() + propHubOffset[1], pos.GetZ() + propHubOffset[2]);
+    this.propellerHub.setPosition(currentPos.GetX() + propHubOffset[0], currentPos.GetY() + propHubOffset[1], currentPos.GetZ() + propHubOffset[2]);
     this.propellerHub.setQuaternion(quat);
     
     const propOffset = quat.rotateVector([0, -0.2, -3.5]); // slightly ahead of hub
-    this.propeller.setPosition(pos.GetX() + propOffset[0], pos.GetY() + propOffset[1], pos.GetZ() + propOffset[2]);
+    this.propeller.setPosition(currentPos.GetX() + propOffset[0], currentPos.GetY() + propOffset[1], currentPos.GetZ() + propOffset[2]);
     this.propeller.setQuaternion(propFinalQuat);
 
-    // Wheels logic - retracting them visually based on speed? Or just leave them down
-    // Let's retract them based on speed
+    // Wheels logic
     const isFlyingFast = this.velocity > 50;
     
     // Smooth retraction blend (0 = down, 1 = up)
@@ -238,11 +285,11 @@ export class Plane {
     const lWheelPos = UT.VEC3_ADD(lPivot, lGearQuat.rotateVector(lWheelLocal));
     
     const strutLeftOffset = quat.rotateVector(lStrutPos);
-    this.strutLeft.setPosition(pos.GetX() + strutLeftOffset[0], pos.GetY() + strutLeftOffset[1], pos.GetZ() + strutLeftOffset[2]);
+    this.strutLeft.setPosition(currentPos.GetX() + strutLeftOffset[0], currentPos.GetY() + strutLeftOffset[1], currentPos.GetZ() + strutLeftOffset[2]);
     this.strutLeft.setQuaternion(lGearFinalQuat);
     
     const wheelLeftOffset = quat.rotateVector(lWheelPos);
-    this.wheelLeft.setPosition(pos.GetX() + wheelLeftOffset[0], pos.GetY() + wheelLeftOffset[1], pos.GetZ() + wheelLeftOffset[2]);
+    this.wheelLeft.setPosition(currentPos.GetX() + wheelLeftOffset[0], currentPos.GetY() + wheelLeftOffset[1], currentPos.GetZ() + wheelLeftOffset[2]);
     this.wheelLeft.setQuaternion(lGearFinalQuat);
     
     // Right Gear
@@ -258,11 +305,11 @@ export class Plane {
     const rWheelPos = UT.VEC3_ADD(rPivot, rGearQuat.rotateVector(rWheelLocal));
     
     const strutRightOffset = quat.rotateVector(rStrutPos);
-    this.strutRight.setPosition(pos.GetX() + strutRightOffset[0], pos.GetY() + strutRightOffset[1], pos.GetZ() + strutRightOffset[2]);
+    this.strutRight.setPosition(currentPos.GetX() + strutRightOffset[0], currentPos.GetY() + strutRightOffset[1], currentPos.GetZ() + strutRightOffset[2]);
     this.strutRight.setQuaternion(rGearFinalQuat);
     
     const wheelRightOffset = quat.rotateVector(rWheelPos);
-    this.wheelRight.setPosition(pos.GetX() + wheelRightOffset[0], pos.GetY() + wheelRightOffset[1], pos.GetZ() + wheelRightOffset[2]);
+    this.wheelRight.setPosition(currentPos.GetX() + wheelRightOffset[0], currentPos.GetY() + wheelRightOffset[1], currentPos.GetZ() + wheelRightOffset[2]);
     this.wheelRight.setQuaternion(rGearFinalQuat);
 
     // Back Gear
@@ -278,11 +325,11 @@ export class Plane {
     const bWheelPos = UT.VEC3_ADD(bPivot, bGearQuat.rotateVector(bWheelLocal));
     
     const strutBackOffset = quat.rotateVector(bStrutPos);
-    this.strutBack.setPosition(pos.GetX() + strutBackOffset[0], pos.GetY() + strutBackOffset[1], pos.GetZ() + strutBackOffset[2]);
+    this.strutBack.setPosition(currentPos.GetX() + strutBackOffset[0], currentPos.GetY() + strutBackOffset[1], currentPos.GetZ() + strutBackOffset[2]);
     this.strutBack.setQuaternion(bGearFinalQuat);
     
     const wheelBackOffset = quat.rotateVector(bWheelPos);
-    this.wheelBack.setPosition(pos.GetX() + wheelBackOffset[0], pos.GetY() + wheelBackOffset[1], pos.GetZ() + wheelBackOffset[2]);
+    this.wheelBack.setPosition(currentPos.GetX() + wheelBackOffset[0], currentPos.GetY() + wheelBackOffset[1], currentPos.GetZ() + wheelBackOffset[2]);
     this.wheelBack.setQuaternion(bGearFinalQuat);
 
     // Contrails logic
@@ -291,11 +338,11 @@ export class Plane {
        const rightWingTip = quat.rotateVector([5.0, -0.4, -0.5]);
        
        this.trails.push({
-           x: pos.GetX() + leftWingTip[0], y: pos.GetY() + leftWingTip[1], z: pos.GetZ() + leftWingTip[2],
+           x: currentPos.GetX() + leftWingTip[0], y: currentPos.GetY() + leftWingTip[1], z: currentPos.GetZ() + leftWingTip[2],
            life: 1.5, maxLife: 1.5
        });
        this.trails.push({
-           x: pos.GetX() + rightWingTip[0], y: pos.GetY() + rightWingTip[1], z: pos.GetZ() + rightWingTip[2],
+           x: currentPos.GetX() + rightWingTip[0], y: currentPos.GetY() + rightWingTip[1], z: currentPos.GetZ() + rightWingTip[2],
            life: 1.5, maxLife: 1.5
        });
     }
