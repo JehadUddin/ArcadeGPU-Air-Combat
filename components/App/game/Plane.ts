@@ -28,8 +28,9 @@ export class Plane {
   strutBack: Gfx3Mesh;
 
   physicsBody: any;
-  velocity: number = 20; // Default cruising speed
+  velocity: number = 0; // Default cruising speed
   isLanded: boolean = false;
+  wheelRetractState: number = 0; // 0 = down, 1 = up
   
   rotation: Quaternion = new Quaternion();
 
@@ -78,7 +79,7 @@ export class Plane {
 
     this.physicsBody = gfx3JoltManager.addBox({
       width: 1.2, height: 1.2, depth: 7.0, // approximate full size
-      x: 0, y: 50.0, z: 0,
+      x: 0, y: 1.3, z: 0,
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
       settings: { mAngularDamping: 1.0, mLinearDamping: 0.5, mMassPropertiesOverride: 100.0, mAllowedDOFs: 7 }
@@ -108,7 +109,7 @@ export class Plane {
     
     // Evaluate if we are leaving the ground
     const currentForward = this.rotation.rotateVector([0, 0, -1]);
-    if (this.isLanded && this.velocity > 45 && currentForward[1] > 0.1) {
+    if (this.isLanded && this.velocity > 35 && currentForward[1] > 0.1) {
         this.isLanded = false; // Takeoff!
     }
 
@@ -168,7 +169,7 @@ export class Plane {
     }
 
     // Throttle controls
-    const accelRate = throttleInput * (this.isLanded ? 15.0 : 30.0);
+    const accelRate = throttleInput * (this.isLanded ? 20.0 : 30.0);
     this.velocity += accelRate * dt;
     
     // Gravity effect on speed based on pitch
@@ -178,7 +179,8 @@ export class Plane {
         this.velocity -= verticalPitch * 15.0 * dt; // gravity speeds up dives, slows climbs
     } else {
         // Ground friction
-        this.velocity -= this.velocity * 0.5 * dt; if (throttleInput == 0 && this.velocity < 5) this.velocity = 0;
+        this.velocity -= this.velocity * 0.2 * dt; 
+        if (throttleInput == 0 && this.velocity < 5) this.velocity = 0;
     }
     
     // Drag/air resistance brings speed closer to default cruise if no input
@@ -267,10 +269,17 @@ export class Plane {
     this.propeller.setQuaternion(propFinalQuat);
 
     // Wheels logic
-    const isFlyingFast = this.velocity > 50;
+    const altitude = currentPos.GetY() - 1.3;
+    const shouldRetract = altitude > 5.0 && this.velocity > 40 && !this.isLanded;
+    
+    if (shouldRetract) {
+        this.wheelRetractState = Math.min(1, this.wheelRetractState + dt * 0.5); // Retract over 2 sec
+    } else {
+        this.wheelRetractState = Math.max(0, this.wheelRetractState - dt * 0.5); // Extend over 2 sec
+    }
     
     // Smooth retraction blend (0 = down, 1 = up)
-    let wheelRetractAmount = Math.max(0, Math.min(1, (this.velocity - 35) / 20));
+    let wheelRetractAmount = this.wheelRetractState;
     
     // Left Gear
     const lPivot: vec3 = [-1.5, -0.4, -0.5]; // under the left wing
