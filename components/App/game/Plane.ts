@@ -18,6 +18,7 @@ export class Plane {
   propeller: Gfx3Mesh;
   propellerHub: Gfx3Mesh;
   cockpit: Gfx3Mesh;
+  trailMesh: Gfx3Mesh;
 
   physicsBody: any;
   velocity: number = 20; // Default cruising speed
@@ -27,7 +28,13 @@ export class Plane {
   pitch: number = 0;
   roll: number = 0;
   
+  rollRate: number = 0;
+  pitchRate: number = 0;
+  yawRate: number = 0;
+  
   propAngle: number = 0;
+
+  trails: { x: number, y: number, z: number, life: number, maxLife: number }[] = [];
 
   constructor() {
     // Colors inspired by a WWII Spitfire / Mustang
@@ -48,6 +55,7 @@ export class Plane {
     
     this.propeller = createBoxMesh(4.5, 0.1, 0.1, propColor);
     this.propellerHub = createBoxMesh(0.6, 0.6, 0.8, propHubColor);
+    this.trailMesh = createBoxMesh(1.0, 1.0, 1.0, [0.9, 0.95, 1.0]); // white/light-blue trail
 
     this.physicsBody = gfx3JoltManager.addBox({
       width: 1.4, height: 1.4, depth: 7.5, // approximate full size
@@ -69,29 +77,47 @@ export class Plane {
   }
 
   update(ts: number, rollInput: number, pitchInput: number, yawInput: number, throttleInput: number) {
-    const minSpeed = 10;
-    const maxSpeed = 80;
+    const minSpeed = 20;
+    const maxSpeed = 120;
     
-    // Input handling
-    const rollSpeed = 2.5;
-    const pitchSpeed = 1.5;
-    const yawSpeed = 1.0;
+    // Convert inputs to target rates
+    const targetRollRate = rollInput * 3.0; // max 3 radians/sec ~ 180 deg/s
+    const targetPitchRate = pitchInput * 1.8;
+    const targetYawRate = yawInput * 1.2;
 
-    // Apply inputs to current attitudes
-    this.roll -= rollInput * rollSpeed * (ts / 1000);
-    this.pitch -= pitchInput * pitchSpeed * (ts / 1000);
+    // Smooth movement over time to simulate momentum/inertia
+    const rateSmooth = 1.0 - Math.exp(-6.0 * (ts / 1000));
+    this.rollRate = UT.LERP(this.rollRate, targetRollRate, rateSmooth);
+    this.pitchRate = UT.LERP(this.pitchRate, targetPitchRate, rateSmooth);
+    this.yawRate = UT.LERP(this.yawRate, targetYawRate, rateSmooth);
+
+    // Apply rotation rates
+    this.roll -= this.rollRate * (ts / 1000);
+    this.pitch -= this.pitchRate * (ts / 1000);
+    this.yaw -= this.yawRate * (ts / 1000);
     
-    // Allow direct yaw input, but also add turn rate based on roll
-    this.yaw -= yawInput * yawSpeed * (ts / 1000);
+    // Natural banked turn: plane gradually turns into the roll
     const turnRate = Math.sin(this.roll) * 1.5 * Math.cos(this.pitch);
     this.yaw -= turnRate * (ts / 1000);
     
-    // Natural pitch down when rolled to simulate loss of lift
-    const pitchDrop = Math.abs(Math.sin(this.roll)) * 0.2 * (ts / 1000);
-    this.pitch += pitchDrop;
+    // Natural gravity pitch down when rolled (simulate lift vector moving sideways)
+    const pitchDrop = Math.abs(Math.sin(this.roll)) * 0.4;
+    this.pitch += pitchDrop * (ts / 1000);
 
-    const accelRate = throttleInput * 20.0;
+    // Avoid gimbal lock by clamping pitch
+    this.pitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, this.pitch));
+
+    // Throttle controls
+    const accelRate = throttleInput * 25.0;
     this.velocity += accelRate * (ts / 1000);
+    
+    // Drag/air resistance brings speed closer to default cruise if no input
+    if (Math.abs(throttleInput) < 0.1) {
+        const defaultCruise = 50;
+        this.velocity = UT.LERP(this.velocity, defaultCruise, 1.0 - Math.exp(-0.5 * (ts / 1000)));
+    }
+    
+    // Speed boundaries
     this.velocity = Math.max(minSpeed, Math.min(maxSpeed, this.velocity));
 
     // Calculate rotation quaternion (YXZ order is yaw-pitch-roll)
@@ -100,8 +126,8 @@ export class Plane {
     // Forward vector
     const forward = quat.rotateVector([0, 0, -1]);
     
+    // Update physics velocity
     const linVel = UT.VEC3_SCALE(forward, this.velocity);
-    
     const joltLinVel = new Gfx3Jolt.Vec3(linVel[0], linVel[1], linVel[2]);
     gfx3JoltManager.bodyInterface.SetLinearVelocity(this.physicsBody.body.GetID(), joltLinVel);
     
@@ -156,6 +182,28 @@ export class Plane {
     const propOffset = quat.rotateVector([0, -0.2, -3.5]);
     this.propeller.setPosition(pos.GetX() + propOffset[0], pos.GetY() + propOffset[1], pos.GetZ() + propOffset[2]);
     this.propeller.setQuaternion(propFinalQuat);
+
+    // Contrails logic
+    if (this.velocity > 60 || Math.abs(this.rollRate) > 1.0 || Math.abs(this.pitchRate) > 1.0) {
+       const leftWingTip = quat.rotateVector([-5.0, -0.4, -0.5]);
+       const rightWingTip = quat.rotateVector([5.0, -0.4, -0.5]);
+       
+       this.trails.push({
+           x: pos.GetX() + leftWingTip[0], y: pos.GetY() + leftWingTip[1], z: pos.GetZ() + leftWingTip[2],
+           life: 1.5, maxLife: 1.5
+       });
+       this.trails.push({
+           x: pos.GetX() + rightWingTip[0], y: pos.GetY() + rightWingTip[1], z: pos.GetZ() + rightWingTip[2],
+           life: 1.5, maxLife: 1.5
+       });
+    }
+
+    for (let i = this.trails.length - 1; i >= 0; i--) {
+       this.trails[i].life -= (ts / 1000);
+       if (this.trails[i].life <= 0) {
+           this.trails.splice(i, 1);
+       }
+    }
   }
 
   draw() {
@@ -168,6 +216,15 @@ export class Plane {
     this.h_tail.draw();
     this.propellerHub.draw();
     this.propeller.draw();
+    
+    // Draw trails
+    for (const t of this.trails) {
+        const scale = (t.life / t.maxLife) * 0.5; // start small, get smaller
+        const ZERO: vec3 = [0,0,0];
+        const dummyQuat = new Quaternion();
+        const mat = UT.MAT4_TRANSFORM([t.x, t.y, t.z], ZERO, [scale, scale, scale], dummyQuat);
+        gfx3MeshRenderer.drawMesh(this.trailMesh, mat);
+    }
   }
 }
 

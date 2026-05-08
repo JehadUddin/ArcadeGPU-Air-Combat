@@ -149,16 +149,18 @@ const App = () => {
                 <h1 className="text-4xl font-bebas text-white drop-shadow-lg tracking-wider">AIR COMBAT</h1>
                 <div className="bg-black/20 backdrop-blur-sm p-3 rounded-lg border border-white/5 mt-2">
                     <p className="text-white/80 text-xs font-bold uppercase tracking-tighter mb-1">Controls</p>
-                    <p className="text-white/60 text-[11px] font-mono leading-tight">W/S • PITCH</p>
+                    <p className="text-white/60 text-[11px] font-mono leading-tight">W/S • THROTTLE</p>
                     <p className="text-white/60 text-[11px] font-mono leading-tight">A/D • ROLL</p>
                     <p className="text-white/60 text-[11px] font-mono leading-tight">Q/E • YAW</p>
-                    <p className="text-white/60 text-[11px] font-mono leading-tight">SHIFT/CTRL • THROTTLE</p>
+                    <p className="text-white/60 text-[11px] font-mono leading-tight">ARROWS • PITCH/YAW</p>
                     <p className="text-white/60 text-[11px] font-mono leading-tight">MOUSE • STEER (PITCH/YAW)</p>
                 </div>
             </div>
             
-            <div className="fixed inset-0 pointer-events-none flex items-center justify-center">
-               <div className="w-1 h-1 bg-white rounded-full opacity-50 mix-blend-difference"></div>
+            <div className="fixed inset-0 pointer-events-none flex items-center justify-center mix-blend-difference opacity-50">
+               <div className="absolute w-[20px] h-[2px] bg-white rounded"></div>
+               <div className="absolute w-[2px] h-[20px] bg-white rounded"></div>
+               <div className="absolute w-[4px] h-[4px] bg-transparent border border-white rounded-full"></div>
             </div>
 
             <div className="pointer-events-auto flex justify-between items-end w-full pb-8">

@@ -29,6 +29,9 @@ export class GameScreen extends Screen {
   frameMouseX: number = 0;
   frameMouseY: number = 0;
   
+  virtualMouseX: number = 0;
+  virtualMouseY: number = 0;
+
   constructor() {
     super();
     this.camera = new Gfx3Camera(0);
@@ -45,14 +48,16 @@ export class GameScreen extends Screen {
     ]);
     
     // Desktop Controls
-    inputManager.registerAction('keyboard', 'KeyW', 'PITCH_DOWN');
-    inputManager.registerAction('keyboard', 'KeyS', 'PITCH_UP');
+    inputManager.registerAction('keyboard', 'KeyW', 'THR_UP');
+    inputManager.registerAction('keyboard', 'KeyS', 'THR_DOWN');
     inputManager.registerAction('keyboard', 'KeyA', 'ROLL_LEFT');
     inputManager.registerAction('keyboard', 'KeyD', 'ROLL_RIGHT');
     inputManager.registerAction('keyboard', 'KeyQ', 'YAW_LEFT');
     inputManager.registerAction('keyboard', 'KeyE', 'YAW_RIGHT');
-    inputManager.registerAction('keyboard', 'ShiftLeft', 'THR_UP');
-    inputManager.registerAction('keyboard', 'ControlLeft', 'THR_DOWN');
+    inputManager.registerAction('keyboard', 'ArrowUp', 'PITCH_DOWN'); 
+    inputManager.registerAction('keyboard', 'ArrowDown', 'PITCH_UP');
+    inputManager.registerAction('keyboard', 'ArrowLeft', 'YAW_LEFT');
+    inputManager.registerAction('keyboard', 'ArrowRight', 'YAW_RIGHT');
 
     inputManager.setPointerLockEnabled(true);
     eventManager.subscribe(inputManager, 'E_MOUSE_MOVE', this, this.handleMouseMove);
@@ -94,8 +99,19 @@ export class GameScreen extends Screen {
     
     // Also use mouse for pitch/yaw if pointer is locked
     if (inputManager.isPointerLockCaptured()) {
-        yawInput -= this.frameMouseX * 0.05; // Mouse X -> Yaw
-        pitchInput += this.frameMouseY * 0.05; // Mouse Y -> Pitch
+        this.virtualMouseX += this.frameMouseX * 0.003; 
+        this.virtualMouseY += this.frameMouseY * 0.003;
+        
+        // Clamp virtual mouse
+        this.virtualMouseX = Math.max(-1, Math.min(1, this.virtualMouseX));
+        this.virtualMouseY = Math.max(-1, Math.min(1, this.virtualMouseY));
+        
+        // Decay to auto-center when not moving
+        this.virtualMouseX *= Math.exp(-2.5 * (ts / 1000));
+        this.virtualMouseY *= Math.exp(-2.5 * (ts / 1000));
+        
+        yawInput -= this.virtualMouseX; // Mouse X -> Yaw
+        pitchInput += this.virtualMouseY; // Mouse Y -> Pitch
     }
     this.frameMouseX = 0;
     this.frameMouseY = 0;
@@ -110,7 +126,13 @@ export class GameScreen extends Screen {
     // Offset behind and up relative to the plane's YAW and slightly pitch
     // By keeping roll at 0 for offset, the camera won't flip upside down when the plane rolls
     const offsetQuat = Quaternion.createFromEuler(this.plane.yaw, this.plane.pitch * 0.8, 0, 'YXZ');
-    const camOffset = offsetQuat.rotateVector([0, 4, 18]); // slightly higher and further back
+    
+    // Dynamic camera back offset based on velocity
+    const speedFactor = Math.max(0, (this.plane.velocity - 50) / 70); // 0 at cruise, goes up to 1 at max speed
+    const zOffset = 18 + speedFactor * 12.0; 
+    const yOffset = 4 + speedFactor * 3.0;
+
+    const camOffset = offsetQuat.rotateVector([0, yOffset, zOffset]);
     
     if (!followPos || isNaN(followPos[0]) || isNaN(followPos[1]) || isNaN(followPos[2])) {
         return;
