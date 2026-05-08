@@ -9,11 +9,14 @@ import { createBoxMesh } from './GameUtils';
  * The Plane class represents the player-controlled airplane.
  */
 export class Plane {
-  fuselage: Gfx3Mesh;
+  nose: Gfx3Mesh;
+  body: Gfx3Mesh;
+  tailBoom: Gfx3Mesh;
   wings: Gfx3Mesh;
   v_tail: Gfx3Mesh;
   h_tail: Gfx3Mesh;
   propeller: Gfx3Mesh;
+  propellerHub: Gfx3Mesh;
   cockpit: Gfx3Mesh;
 
   physicsBody: any;
@@ -27,20 +30,27 @@ export class Plane {
   propAngle: number = 0;
 
   constructor() {
-    const fuselageColor: [number, number, number] = [0.35, 0.4, 0.25]; // Olive green
-    const wingColor: [number, number, number] = [0.3, 0.35, 0.2]; // Darker olive
-    const propColor: [number, number, number] = [0.05, 0.05, 0.05]; // Black/dark grey
-    const cockpitColor: [number, number, number] = [0.1, 0.2, 0.3]; // Glassish
+    // Colors inspired by a WWII Spitfire / Mustang
+    const fuselageColor: [number, number, number] = [0.4, 0.45, 0.4];
+    const wingColor: [number, number, number] = [0.35, 0.4, 0.35];
+    const propColor: [number, number, number] = [0.1, 0.1, 0.1];
+    const propHubColor: [number, number, number] = [0.6, 0.1, 0.1]; // Red hub
+    const cockpitColor: [number, number, number] = [0.2, 0.6, 0.8]; // Glass
 
-    this.fuselage = createBoxMesh(1.2, 1.2, 6.0, fuselageColor);
-    this.cockpit = createBoxMesh(0.8, 0.6, 1.5, cockpitColor);
-    this.wings = createBoxMesh(7.0, 0.15, 1.8, wingColor);
-    this.v_tail = createBoxMesh(0.15, 1.5, 1.2, fuselageColor);
-    this.h_tail = createBoxMesh(3.0, 0.1, 1.0, wingColor);
-    this.propeller = createBoxMesh(3.5, 0.2, 0.1, propColor);
+    this.nose = createBoxMesh(1.0, 1.0, 1.5, fuselageColor);
+    this.body = createBoxMesh(1.4, 1.4, 3.0, fuselageColor);
+    this.tailBoom = createBoxMesh(0.8, 0.8, 3.0, fuselageColor);
+    
+    this.cockpit = createBoxMesh(1.0, 0.8, 1.8, cockpitColor);
+    this.wings = createBoxMesh(10.0, 0.15, 2.2, wingColor);
+    this.v_tail = createBoxMesh(0.15, 2.0, 1.5, wingColor);
+    this.h_tail = createBoxMesh(3.5, 0.15, 1.2, wingColor);
+    
+    this.propeller = createBoxMesh(4.5, 0.1, 0.1, propColor);
+    this.propellerHub = createBoxMesh(0.6, 0.6, 0.8, propHubColor);
 
     this.physicsBody = gfx3JoltManager.addBox({
-      width: 1.0, height: 1.0, depth: 5.0,
+      width: 1.4, height: 1.4, depth: 7.5, // approximate full size
       x: 0, y: 50.0, z: 0,
       motionType: Gfx3Jolt.EMotionType_Dynamic,
       layer: JOLT_LAYER_MOVING,
@@ -98,41 +108,65 @@ export class Plane {
     const pos = this.physicsBody.body.GetPosition();
     
     // Sync Mesh Positions
-    this.fuselage.setPosition(pos.GetX(), pos.GetY(), pos.GetZ());
-    this.fuselage.setQuaternion(quat);
+    // Base position is roughly the center of mass
+    const bodyOffset = quat.rotateVector([0, 0, 0]);
+    this.body.setPosition(pos.GetX() + bodyOffset[0], pos.GetY() + bodyOffset[1], pos.GetZ() + bodyOffset[2]);
+    this.body.setQuaternion(quat);
     
-    const cockpitOffset = quat.rotateVector([0, 0.7, 0.5]);
+    // Nose is in front of the body
+    const noseOffset = quat.rotateVector([0, -0.2, -2.25]);
+    this.nose.setPosition(pos.GetX() + noseOffset[0], pos.GetY() + noseOffset[1], pos.GetZ() + noseOffset[2]);
+    this.nose.setQuaternion(quat);
+    
+    // Tailboom is behind the body
+    const tailOffset = quat.rotateVector([0, 0, 3.0]);
+    this.tailBoom.setPosition(pos.GetX() + tailOffset[0], pos.GetY() + tailOffset[1], pos.GetZ() + tailOffset[2]);
+    this.tailBoom.setQuaternion(quat);
+    
+    // Cockpit on top of the body
+    const cockpitOffset = quat.rotateVector([0, 1.1, -0.5]);
     this.cockpit.setPosition(pos.GetX() + cockpitOffset[0], pos.GetY() + cockpitOffset[1], pos.GetZ() + cockpitOffset[2]);
     this.cockpit.setQuaternion(quat);
 
-    const wingOffset = quat.rotateVector([0, -0.2, 0.2]);
+    // Wings attached near the front/center of the body
+    const wingOffset = quat.rotateVector([0, -0.4, -0.5]);
     this.wings.setPosition(pos.GetX() + wingOffset[0], pos.GetY() + wingOffset[1], pos.GetZ() + wingOffset[2]);
     this.wings.setQuaternion(quat);
 
-    const vTailOffset = quat.rotateVector([0, 0.8, 2.5]);
+    // V-Tail on top of the rear tail boom
+    const vTailOffset = quat.rotateVector([0, 0.8, 4.0]);
     this.v_tail.setPosition(pos.GetX() + vTailOffset[0], pos.GetY() + vTailOffset[1], pos.GetZ() + vTailOffset[2]);
     this.v_tail.setQuaternion(quat);
 
-    const hTailOffset = quat.rotateVector([0, 0.2, 2.7]);
+    // H-Tail at the rear of the tail boom
+    const hTailOffset = quat.rotateVector([0, 0.0, 4.2]);
     this.h_tail.setPosition(pos.GetX() + hTailOffset[0], pos.GetY() + hTailOffset[1], pos.GetZ() + hTailOffset[2]);
     this.h_tail.setQuaternion(quat);
 
-    // Propeller spinning
+    // Propeller spinning at the front of the nose
     this.propAngle += this.velocity * 1.5 * (ts/1000);
     const propLocalQuat = Quaternion.createFromEuler(0, 0, this.propAngle, 'ZXY');
     const propFinalQuat = Quaternion.multiply(quat, propLocalQuat);
     
-    const propOffset = quat.rotateVector([0, 0, -3.1]);
+    const propHubOffset = quat.rotateVector([0, -0.2, -3.4]);
+    this.propellerHub.setPosition(pos.GetX() + propHubOffset[0], pos.GetY() + propHubOffset[1], pos.GetZ() + propHubOffset[2]);
+    this.propellerHub.setQuaternion(quat); // hub doesn't need to spin visually if it's rotation symmetric, but we can spin it
+    this.propellerHub.setQuaternion(propFinalQuat);
+    
+    const propOffset = quat.rotateVector([0, -0.2, -3.5]);
     this.propeller.setPosition(pos.GetX() + propOffset[0], pos.GetY() + propOffset[1], pos.GetZ() + propOffset[2]);
     this.propeller.setQuaternion(propFinalQuat);
   }
 
   draw() {
-    this.fuselage.draw();
+    this.nose.draw();
+    this.body.draw();
+    this.tailBoom.draw();
     this.cockpit.draw();
     this.wings.draw();
     this.v_tail.draw();
     this.h_tail.draw();
+    this.propellerHub.draw();
     this.propeller.draw();
   }
 }
