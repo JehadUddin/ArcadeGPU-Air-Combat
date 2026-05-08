@@ -101,16 +101,28 @@ export class Plane {
     const planeY = pos.GetY();
     const groundY = 1.3; // Wheels extend to approx -1.2
 
-    if (planeY <= groundY) {
+    if (planeY <= groundY + 0.1) {
+        if (!this.isLanded) {
+            // Touch down!
+            const currentForward = this.rotation.rotateVector([0, 0, -1]);
+            if (currentForward[1] < -0.3 || this.velocity > 120) {
+                // Hard landing, scrub a bunch of speed
+                this.velocity *= 0.6;
+            }
+        }
+        
         this.isLanded = true;
-        // Snap to ground to prevent falling through when pitched down
-        gfx3JoltManager.bodyInterface.SetPosition(this.physicsBody.body.GetID(), new Gfx3Jolt.Vec3(pos.GetX(), groundY, pos.GetZ()), Gfx3Jolt.EActivation_Activate);
-    }
-    
-    // Evaluate if we are leaving the ground
-    const currentForward = this.rotation.rotateVector([0, 0, -1]);
-    if (this.isLanded && this.velocity > 35 && currentForward[1] > 0.1) {
-        this.isLanded = false; // Takeoff!
+    } else {
+        if (this.isLanded) {
+            // Did we just lift off?
+            const currentForward = this.rotation.rotateVector([0, 0, -1]);
+            if (this.velocity > 35 && currentForward[1] > 0.05) {
+                this.isLanded = false; // Successful takeoff!
+            } else {
+                // We bounced or hopped but don't have enough speed. We will just fall.
+                this.isLanded = false; 
+            }
+        }
     }
 
     const minSpeed = this.isLanded ? 0 : 25;
@@ -124,9 +136,22 @@ export class Plane {
     const normalizedSpeed = Math.max(0, Math.min(1, (this.velocity - 20) / (maxSpeed - 20)));
     const maneuverability = this.isLanded ? 0 : 0.5 + 0.5 * Math.sin(normalizedSpeed * Math.PI); // best around middle speed
 
-    let targetRollRate = rollInput * rollResponsiveness * maneuverability;
+    // Natural bank-to-turn and auto-level
+    const localRight = this.rotation.rotateVector([1, 0, 0]);
+    const currentRollAngle = Math.asin(Math.max(-1, Math.min(1, localRight[1])));
+    
+    // Auto-level if no roll input
+    let autoLevelRoll = 0;
+    if (Math.abs(rollInput) < 0.1 && !this.isLanded) {
+        autoLevelRoll = currentRollAngle * 1.5; // pull towards level wings
+    }
+
+    let targetRollRate = (rollInput * rollResponsiveness + autoLevelRoll) * maneuverability;
     let targetPitchRate = pitchInput * pitchResponsiveness * maneuverability;
-    let targetYawRate = yawInput * 1.0 * maneuverability;
+    
+    // Natural yaw from bank
+    let bankTurnYaw = -currentRollAngle * 0.5; // If banked right (negative angle), we want to yaw right
+    let targetYawRate = (yawInput * 1.0 + bankTurnYaw) * maneuverability;
 
     if (this.isLanded) {
         targetRollRate = 0;
@@ -154,8 +179,8 @@ export class Plane {
         // Auto-level pitch slightly unless we are taking off
         if (pitchInput >= 0) { // If not pulling back
             const localForward = this.rotation.rotateVector([0, 0, -1]);
-            const pitchError = Math.asin(Math.max(-1, Math.min(1, localForward[1])));
-            deltaPitch += pitchError * 3.0 * dt;
+            const pitchError = Math.asin(Math.max(-1, Math.min(1, -localForward[1])));
+            deltaPitch += pitchError * 5.0 * dt;
         }
     }
 
@@ -204,13 +229,39 @@ export class Plane {
     // Update physics velocity
     const trueSpeed = this.isLanded ? Math.max(0, this.velocity) : this.velocity;
     
-    // If landed, velocity shouldn't go down into the ground
-    let linVel = UT.VEC3_SCALE(forward, trueSpeed);
-    if (this.isLanded && linVel[1] < 0) {
-        linVel[1] = 0; // prevent downward velocity
+    // We get current physics velocity so we can drift
+    const currentJoltVel = gfx3JoltManager.bodyInterface.GetLinearVelocity(this.physicsBody.body.GetID());
+    const currVel: vec3 = [currentJoltVel.GetX(), currentJoltVel.GetY(), currentJoltVel.GetZ()];
+    
+    const desiredVel = UT.VEC3_SCALE(forward, trueSpeed);
+    
+    let driftFactor = 2.0 * dt; // Adjust this to feel more/less slidey
+    let nextVel = UT.VEC3_LERP(currVel, desiredVel, 1.0 - Math.exp(-driftFactor));
+    
+    // Add lack-of-lift gravity (stall effect)
+    if (!this.isLanded) {
+        const liftFactor = Math.min(1.0, this.velocity / 60.0); // full lift at 60 speed
+        nextVel[1] -= (1.0 - liftFactor) * 25.0 * dt; // Gravity down
     }
     
-    const joltLinVel = new Gfx3Jolt.Vec3(linVel[0], linVel[1], linVel[2]);
+    if (this.isLanded) {
+        nextVel = desiredVel; // No drift on ground! Tires stick to the grass
+        
+        // Prevent lifting if too slow
+        if (this.velocity <= 35 && nextVel[1] > 0) {
+            nextVel[1] = 0;
+        }
+        
+        // Use a spring to keep plane at groundY instead of sudden snapping
+        const errorY = groundY - planeY;
+        if (errorY > 0.05) {
+            nextVel[1] += errorY * 10.0; // Spring up
+        } else if (nextVel[1] < 0) {
+            nextVel[1] = 0; // Prevent falling through
+        }
+    }
+    
+    const joltLinVel = new Gfx3Jolt.Vec3(nextVel[0], nextVel[1], nextVel[2]);
     gfx3JoltManager.bodyInterface.SetLinearVelocity(this.physicsBody.body.GetID(), joltLinVel);
     
     // pos is already declared at the top of the function. Update it.
