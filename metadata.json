@@ -1,0 +1,6 @@
+{
+  "name": "ArcadeGPU: Air Combat",
+  "description": "A high-performance 3D Flight Simulator Game built with ArcadeGPU, featuring custom physics, procedural models, and an Arcade aesthetic.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
